@@ -1,0 +1,174 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: aura-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: aura-app
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - aura-network
+
+  # Redis for Queue Management
+  redis:
+    image: redis:7-alpine
+    container_name: aura-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - aura-network
+
+  # Node.js Backend
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: ../infra/docker/Dockerfile.backend
+    container_name: aura-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://root:password@mongodb:27017/aura-app?authSource=admin
+      - REDIS_URL=redis://redis:6379
+      - OCR_SERVICE_URL=http://ocr-service:8001
+      - ICR_SERVICE_URL=http://icr-service:8002
+      - NLP_SERVICE_URL=http://nlp-service:8003
+      - DOC_INTEL_SERVICE_URL=http://doc-intel:8000
+    volumes:
+      - ../../backend:/app
+      - /app/node_modules
+      - uploads_data:/app/uploads
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - aura-network
+
+  # React Frontend
+  frontend:
+    build:
+      context: ../../client
+      dockerfile: ../infra/docker/Dockerfile.frontend
+    container_name: aura-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:3000/api
+    volumes:
+      - ../../client:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - aura-network
+
+  # OCR Service
+  ocr-service:
+    build:
+      context: ../../engines/ocr
+      dockerfile: ../../infra/docker/Dockerfile.ocr
+    container_name: aura-ocr-service
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - FLASK_ENV=development
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ../../engines/ocr:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      - redis
+    networks:
+      - aura-network
+
+  # ICR Service
+  icr-service:
+    build:
+      context: ../../engines/icr
+      dockerfile: ../../infra/docker/Dockerfile.icr
+    container_name: aura-icr-service
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - FLASK_ENV=development
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ../../engines/icr:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      - redis
+    networks:
+      - aura-network
+
+  # NLP Service
+  nlp-service:
+    build:
+      context: ../../engines/nlp
+      dockerfile: ../../infra/docker/Dockerfile.nlp
+    container_name: aura-nlp-service
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    environment:
+      - FLASK_ENV=development
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ../../engines/nlp:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      - redis
+    networks:
+      - aura-network
+
+  # Document Intelligence Orchestrator
+  doc-intel:
+    build:
+      context: ../../services/doc-intel
+      dockerfile: ../../infra/docker/Dockerfile.doc-intel
+    container_name: aura-doc-intel
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - FLASK_ENV=development
+      - REDIS_URL=redis://redis:6379
+      - OCR_SERVICE_URL=http://ocr-service:8001
+      - ICR_SERVICE_URL=http://icr-service:8002
+      - NLP_SERVICE_URL=http://nlp-service:8003
+      - MONGODB_URI=mongodb://root:password@mongodb:27017/aura-app?authSource=admin
+    volumes:
+      - ../../services/doc-intel:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      - mongodb
+      - redis
+      - ocr-service
+      - icr-service
+      - nlp-service
+    networks:
+      - aura-network
+
+volumes:
+  mongodb_data:
+  redis_data:
+  uploads_data:
+
+networks:
+  aura-network:
+    driver: bridge
